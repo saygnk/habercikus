@@ -243,7 +243,7 @@ function MsgLine({ msg, myNick }: { msg: Message; myNick: string }) {
         <span className="msg-bracket">&lt;</span>
         <span className="msg-nick" style={{ color: nickColor(msg.nick) }}>{msg.nick}</span>
         <span className="msg-bracket">&gt;</span>{' '}
-        <span className="msg-text">{msg.content}</span>
+        <span className="msg-text" style={{ color: nickColor(msg.nick) }}>{msg.content}</span>
       </div>
     )
   }
