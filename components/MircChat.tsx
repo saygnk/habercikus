@@ -3,8 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
-const ROOM = 'sohbet'
-const CHANNEL_NAME = '#sohbet'
+interface MircChatProps {
+  room: string
+  channelName: string
+}
 
 interface Message {
   id: string
@@ -39,7 +41,9 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-export default function MircChat() {
+export default function MircChat({ room, channelName }: MircChatProps) {
+  const ROOM = room
+  const CHANNEL_NAME = channelName
   const [nick, setNick] = useState('')
   const [nickDraft, setNickDraft] = useState('')
   const [nickError, setNickError] = useState('')
