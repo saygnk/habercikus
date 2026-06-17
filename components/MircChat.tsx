@@ -33,6 +33,10 @@ function validNick(s: string): boolean {
   return /^[a-zA-Z0-9_\-\[\]{}|^`\\]{2,20}$/.test(s)
 }
 
+function sysMsg(content: string, type = 'system'): Message {
+  return { id: `sys-${Date.now()}-${Math.random()}`, nick: '***', content, msg_type: type, created_at: new Date().toISOString() }
+}
+
 export default function MircChat() {
   const [nick, setNick] = useState('')
   const [nickDraft, setNickDraft] = useState('')
@@ -47,6 +51,8 @@ export default function MircChat() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Track IDs we've already added optimistically so realtime echo doesn't duplicate
+  const sentIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -56,12 +62,16 @@ export default function MircChat() {
   useEffect(() => {
     if (!connected) return
     ;(async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('channels')
         .upsert({ name: CHANNEL_NAME, topic: '' }, { onConflict: 'name' })
         .select('id')
         .single()
-      if (data) setChannelId(data.id)
+      if (error || !data) {
+        setMessages([sysMsg(`Veritabanı bağlantısı kurulamadı: ${error?.message ?? 'bilinmeyen hata'}. supabase/schema.sql dosyasını çalıştırdığınızdan emin olun.`)])
+        return
+      }
+      setChannelId(data.id)
     })()
   }, [connected])
 
@@ -69,17 +79,9 @@ export default function MircChat() {
   useEffect(() => {
     if (!channelId || !nick) return
 
-    // Welcome message (local only)
-    const welcome: Message = {
-      id: 'welcome',
-      nick: '***',
-      content: `Hoş geldin ${nick}! ${CHANNEL_NAME} kanalına bağlandın.`,
-      msg_type: 'join',
-      created_at: new Date().toISOString(),
-    }
-    setMessages([welcome])
+    setMessages([sysMsg(`Hoş geldin ${nick}! ${CHANNEL_NAME} kanalına bağlandın.`, 'join')])
 
-    // Announce join to others
+    // Announce join to others (fire and forget)
     supabase.from('messages').insert({
       channel_id: channelId, nick, content: `${nick} kanala katıldı.`, msg_type: 'join',
     })
@@ -100,8 +102,12 @@ export default function MircChat() {
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` },
         (p) => {
           const msg = p.new as Message & { channel_id: string }
-          // Skip our own join announcement (we showed welcome locally)
+          // Skip our own join broadcast and already-shown optimistic messages
           if (msg.nick === nick && msg.msg_type === 'join') return
+          if (sentIds.current.has(msg.id)) {
+            sentIds.current.delete(msg.id)
+            return
+          }
           setMessages((prev) => [...prev, msg])
         }
       )
@@ -115,7 +121,6 @@ export default function MircChat() {
     return () => {
       supabase.removeChannel(sub)
       if (pingRef.current) clearInterval(pingRef.current)
-      // Remove presence on unmount
       supabase.from('channel_users').delete().eq('channel_id', channelId).eq('nick', nick)
     }
   }, [channelId, nick])
@@ -123,10 +128,8 @@ export default function MircChat() {
   async function loadUsers(chId: string) {
     const since = new Date(Date.now() - 40000).toISOString()
     const { data } = await supabase
-      .from('channel_users')
-      .select('nick')
-      .eq('channel_id', chId)
-      .gte('last_seen', since)
+      .from('channel_users').select('nick')
+      .eq('channel_id', chId).gte('last_seen', since)
     if (data) setUsers(data.map((u) => u.nick))
   }
 
@@ -149,47 +152,70 @@ export default function MircChat() {
 
   const handleSend = useCallback(async () => {
     const text = input.trim()
-    if (!text || !channelId || !nick) return
+    if (!text || !nick) return
     setInput('')
     inputRef.current?.focus()
 
     if (text.startsWith('/')) {
       const [rawCmd, ...rest] = text.slice(1).split(' ')
       const cmd = rawCmd.toLowerCase()
-
       if (cmd === 'nick' && rest[0]) {
         if (!validNick(rest[0])) return
         const old = nick
         setNick(rest[0])
-        await supabase.from('messages').insert({
-          channel_id: channelId, nick: rest[0],
-          content: `${old} artık ${rest[0]} olarak biliniyor.`, msg_type: 'nick',
-        })
-      } else if (cmd === 'me' && rest.length) {
-        await supabase.from('messages').insert({
-          channel_id: channelId, nick, content: rest.join(' '), msg_type: 'action',
-        })
-      } else if (cmd === 'yardim' || cmd === 'help') {
-        const help: Message = {
-          id: `help-${Date.now()}`, nick: '***',
-          content: 'Komutlar: /nick <isim>  /me <eylem>  /yardim',
-          msg_type: 'system', created_at: new Date().toISOString(),
+        if (channelId) {
+          await supabase.from('messages').insert({
+            channel_id: channelId, nick: rest[0],
+            content: `${old} artık ${rest[0]} olarak biliniyor.`, msg_type: 'nick',
+          })
         }
-        setMessages((prev) => [...prev, help])
+      } else if (cmd === 'me' && rest.length && channelId) {
+        const optimistic: Message = { id: `opt-${Date.now()}`, nick, content: rest.join(' '), msg_type: 'action', created_at: new Date().toISOString() }
+        setMessages((prev) => [...prev, optimistic])
+        const { data } = await supabase.from('messages').insert({ channel_id: channelId, nick, content: rest.join(' '), msg_type: 'action' }).select('id').single()
+        if (data) {
+          sentIds.current.add(data.id)
+          setMessages((prev) => prev.map((m) => m.id === optimistic.id ? { ...m, id: data.id } : m))
+        }
+      } else if (cmd === 'yardim' || cmd === 'help') {
+        setMessages((prev) => [...prev, sysMsg('Komutlar: /nick <isim>  /me <eylem>  /yardim')])
       }
       return
     }
 
-    await supabase.from('messages').insert({
-      channel_id: channelId, nick, content: text, msg_type: 'message',
-    })
+    if (!channelId) {
+      setMessages((prev) => [...prev, sysMsg('Kanal bağlantısı henüz hazır değil, lütfen bekleyin.')])
+      return
+    }
+
+    // Optimistic: show immediately
+    const optimistic: Message = { id: `opt-${Date.now()}`, nick, content: text, msg_type: 'message', created_at: new Date().toISOString() }
+    setMessages((prev) => [...prev, optimistic])
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({ channel_id: channelId, nick, content: text, msg_type: 'message' })
+      .select('id')
+      .single()
+
+    if (error) {
+      // Replace optimistic with error
+      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
+      setMessages((prev) => [...prev, sysMsg(`Mesaj gönderilemedi: ${error.message}`)])
+      return
+    }
+
+    if (data) {
+      // Mark real ID so realtime echo is skipped; swap optimistic id with real id
+      sentIds.current.add(data.id)
+      setMessages((prev) => prev.map((m) => m.id === optimistic.id ? { ...m, id: data.id } : m))
+    }
   }, [input, channelId, nick])
 
   function onKey(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleSend()
   }
 
-  // ── Nick screen ──
   if (!connected) {
     return (
       <div className="nick-screen">
@@ -212,10 +238,8 @@ export default function MircChat() {
     )
   }
 
-  // ── Chat ──
   return (
     <div className="chat-app">
-      {/* Top bar */}
       <div className="chat-topbar">
         <div className="topbar-left">
           <span className="topbar-brand">habercikus</span>
@@ -225,9 +249,7 @@ export default function MircChat() {
         <div className="topbar-count">{users.length} kişi</div>
       </div>
 
-      {/* Body */}
       <div className="chat-body">
-        {/* Messages */}
         <div className="chat-messages">
           {messages.map((msg) => (
             <MsgLine key={msg.id} msg={msg} myNick={nick} />
@@ -235,22 +257,14 @@ export default function MircChat() {
           <div ref={bottomRef} />
         </div>
 
-        {/* User list */}
         <div className="chat-users">
           <div className="users-header">ONLİNE</div>
           {users.map((u) => (
-            <div
-              key={u}
-              className="user-item"
-              style={{ color: nickColor(u) }}
-            >
-              {u}
-            </div>
+            <div key={u} className="user-item" style={{ color: nickColor(u) }}>{u}</div>
           ))}
         </div>
       </div>
 
-      {/* Input */}
       <div className="chat-inputbar">
         <span className="input-prefix">[{CHANNEL_NAME}]</span>
         <input
@@ -265,7 +279,6 @@ export default function MircChat() {
         <button className="chat-send" onClick={handleSend}>Gönder</button>
       </div>
 
-      {/* Status bar */}
       <div className="chat-statusbar">
         <span>Nick: <strong style={{ color: nickColor(nick) }}>{nick}</strong></span>
         <span>Geçmiş yok</span>
@@ -278,10 +291,9 @@ export default function MircChat() {
 
 function MsgLine({ msg, myNick }: { msg: Message; myNick: string }) {
   const time = ts(msg.created_at)
-
   if (msg.msg_type === 'message') {
     return (
-      <div className="msg-line">
+      <div className="msg-line" style={msg.nick === myNick ? { opacity: 0.85 } : undefined}>
         <span className="msg-ts">[{time}]</span>{' '}
         <span className="msg-bracket">&lt;</span>
         <span className="msg-nick" style={{ color: nickColor(msg.nick) }}>{msg.nick}</span>
@@ -290,7 +302,6 @@ function MsgLine({ msg, myNick }: { msg: Message; myNick: string }) {
       </div>
     )
   }
-
   if (msg.msg_type === 'action') {
     return (
       <div className="msg-line msg-action">
@@ -299,7 +310,6 @@ function MsgLine({ msg, myNick }: { msg: Message; myNick: string }) {
       </div>
     )
   }
-
   return (
     <div className="msg-line msg-sys">
       <span className="msg-ts">[{time}]</span>{' '}
