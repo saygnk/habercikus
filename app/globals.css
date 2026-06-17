@@ -1,0 +1,435 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #808080;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+}
+
+/* ── Nick Modal ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: #808080;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.win-dialog {
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #ffffff #808080 #808080 #ffffff;
+  box-shadow: 2px 2px 0 #000;
+  width: 320px;
+}
+
+.win-titlebar {
+  background: #000080;
+  color: #fff;
+  font-weight: bold;
+  font-size: 12px;
+  padding: 3px 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.win-btn-x {
+  background: #c0c0c0;
+  color: #000;
+  border: 1px solid;
+  border-color: #fff #808080 #808080 #fff;
+  width: 16px;
+  height: 14px;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.win-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.win-body p {
+  font-size: 13px;
+}
+
+.win-input {
+  width: 100%;
+  padding: 3px 5px;
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  outline: none;
+}
+
+.win-input:focus {
+  outline: 1px dotted #000;
+  outline-offset: -3px;
+}
+
+.win-button {
+  align-self: center;
+  padding: 4px 24px;
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #fff #808080 #808080 #fff;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.win-button:active {
+  border-color: #808080 #fff #fff #808080;
+  padding: 5px 23px 3px 25px;
+}
+
+.win-error {
+  color: #cc0000;
+  font-size: 11px;
+}
+
+/* ── Main mIRC Window ── */
+.mirc-app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #fff #808080 #808080 #fff;
+}
+
+/* Title Bar */
+.mirc-titlebar {
+  background: #000080;
+  color: #fff;
+  padding: 3px 6px;
+  font-weight: bold;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.mirc-titlebar-btns {
+  display: flex;
+  gap: 2px;
+}
+
+.mirc-titlebar-btns span {
+  background: #c0c0c0;
+  color: #000;
+  border: 1px solid;
+  border-color: #fff #808080 #808080 #fff;
+  width: 16px;
+  height: 14px;
+  font-size: 10px;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Menu Bar */
+.mirc-menubar {
+  background: #c0c0c0;
+  border-bottom: 1px solid #808080;
+  padding: 2px 4px;
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.mirc-menubar span {
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: default;
+}
+
+.mirc-menubar span:hover {
+  background: #000080;
+  color: #fff;
+}
+
+/* ── Body ── */
+.mirc-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  padding: 2px;
+  gap: 2px;
+}
+
+/* ── Channel Sidebar ── */
+.mirc-sidebar {
+  width: 145px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+  overflow: hidden;
+}
+
+.mirc-sidebar-header {
+  background: #000080;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.mirc-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.mirc-ch-item {
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mirc-ch-item:hover {
+  background: #000080;
+  color: #fff;
+}
+
+.mirc-ch-item.active {
+  background: #000080;
+  color: #fff;
+  font-weight: bold;
+}
+
+/* ── Chat Panel ── */
+.mirc-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.mirc-topic-bar {
+  background: #c0c0c0;
+  border-bottom: 1px solid #808080;
+  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.mirc-topic-bar em {
+  color: #000080;
+  font-style: normal;
+}
+
+.mirc-messages {
+  flex: 1;
+  background: #fff;
+  overflow-y: auto;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mirc-line {
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.mirc-ts {
+  color: #808080;
+  font-size: 11px;
+  user-select: none;
+}
+
+.mirc-bracket {
+  color: #808080;
+}
+
+.mirc-nick {
+  font-weight: bold;
+}
+
+.mirc-text {
+  color: #000;
+}
+
+/* system / join / leave / topic / action lines */
+.line-join   .mirc-sys { color: #006600; font-style: italic; }
+.line-leave  .mirc-sys { color: #660000; font-style: italic; }
+.line-nick   .mirc-sys { color: #006666; font-style: italic; }
+.line-topic  .mirc-sys { color: #000080; font-style: italic; }
+.line-system .mirc-sys { color: #808080; font-style: italic; }
+.line-action .mirc-act { color: #800080; font-style: italic; }
+
+.mirc-sys, .mirc-act {
+  font-style: italic;
+}
+
+/* ── Input Bar ── */
+.mirc-inputbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  background: #c0c0c0;
+  border-top: 1px solid #808080;
+  flex-shrink: 0;
+}
+
+.mirc-input-ch {
+  font-size: 12px;
+  font-weight: bold;
+  color: #000080;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mirc-input {
+  flex: 1;
+  padding: 2px 5px;
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.mirc-input:focus {
+  outline: 1px dotted #000;
+  outline-offset: -3px;
+}
+
+.mirc-send {
+  padding: 3px 14px;
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #fff #808080 #808080 #fff;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.mirc-send:active {
+  border-color: #808080 #fff #fff #808080;
+}
+
+/* ── User List ── */
+.mirc-users {
+  width: 130px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+  overflow: hidden;
+}
+
+.mirc-users-header {
+  background: #000080;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.mirc-users-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.mirc-user-item {
+  padding: 2px 8px;
+  font-size: 12px;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.mirc-user-item.me {
+  font-weight: bold;
+}
+
+.mirc-user-item:hover {
+  background: #e0e0e0;
+}
+
+/* ── Status Bar ── */
+.mirc-statusbar {
+  background: #c0c0c0;
+  border-top: 1px solid #808080;
+  padding: 2px 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+  display: flex;
+  gap: 12px;
+}
+
+.mirc-status-seg {
+  border-right: 1px solid #808080;
+  padding-right: 12px;
+}
+
+.mirc-status-seg:last-child {
+  border-right: none;
+}
+
+/* Scrollbar styling (webkit) */
+::-webkit-scrollbar { width: 16px; }
+::-webkit-scrollbar-track { background: #c0c0c0; }
+::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #fff #808080 #808080 #fff;
+}
+::-webkit-scrollbar-button {
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #fff #808080 #808080 #fff;
+  display: block;
+  height: 16px;
+}
