@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
+const ROOM = 'sohbet'
 const CHANNEL_NAME = '#sohbet'
 
 interface Message {
@@ -33,8 +34,8 @@ function validNick(s: string): boolean {
   return /^[a-zA-Z0-9_\-\[\]{}|^`\\]{2,20}$/.test(s)
 }
 
-function sysMsg(content: string, type = 'system'): Message {
-  return { id: `sys-${Date.now()}-${Math.random()}`, nick: '***', content, msg_type: type, created_at: new Date().toISOString() }
+function makeMsg(nick: string, content: string, msg_type: string): Message {
+  return { id: `${Date.now()}-${Math.random()}`, nick, content, msg_type, created_at: new Date().toISOString() }
 }
 
 export default function MircChat() {
@@ -42,7 +43,6 @@ export default function MircChat() {
   const [nickDraft, setNickDraft] = useState('')
   const [nickError, setNickError] = useState('')
   const [connected, setConnected] = useState(false)
-  const [channelId, setChannelId] = useState<string | null>(null)
 
   const [messages, setMessages] = useState<Message[]>([])
   const [users, setUsers] = useState<string[]>([])
@@ -50,95 +50,66 @@ export default function MircChat() {
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  // Track IDs we've already added optimistically so realtime echo doesn't duplicate
-  const sentIds = useRef<Set<string>>(new Set())
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Get or create the single channel
+  const addMsg = useCallback((msg: Message) => {
+    setMessages((prev) => [...prev, msg])
+  }, [])
+
+  // Connect to Realtime room
   useEffect(() => {
-    if (!connected) return
-    ;(async () => {
-      const { data, error } = await supabase
-        .from('channels')
-        .upsert({ name: CHANNEL_NAME, topic: '' }, { onConflict: 'name' })
-        .select('id')
-        .single()
-      if (error || !data) {
-        setMessages([sysMsg(`Veritabanı bağlantısı kurulamadı: ${error?.message ?? 'bilinmeyen hata'}. supabase/schema.sql dosyasını çalıştırdığınızdan emin olun.`)])
-        return
-      }
-      setChannelId(data.id)
-    })()
-  }, [connected])
+    if (!connected || !nick) return
 
-  // Subscribe + presence once channel is ready
-  useEffect(() => {
-    if (!channelId || !nick) return
-
-    setMessages([sysMsg(`Hoş geldin ${nick}! ${CHANNEL_NAME} kanalına bağlandın.`, 'join')])
-
-    // Announce join to others (fire and forget)
-    supabase.from('messages').insert({
-      channel_id: channelId, nick, content: `${nick} kanala katıldı.`, msg_type: 'join',
+    const room = supabase.channel(ROOM, {
+      config: {
+        broadcast: { self: true },
+        presence: { key: nick },
+      },
     })
 
-    upsertPresence(channelId, nick)
-    loadUsers(channelId)
+    channelRef.current = room
 
-    if (pingRef.current) clearInterval(pingRef.current)
-    pingRef.current = setInterval(() => {
-      upsertPresence(channelId, nick)
-      loadUsers(channelId)
-    }, 20000)
-
-    const sub = supabase
-      .channel(`room:${channelId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` },
-        (p) => {
-          const msg = p.new as Message & { channel_id: string }
-          // Skip our own join broadcast and already-shown optimistic messages
-          if (msg.nick === nick && msg.msg_type === 'join') return
-          if (sentIds.current.has(msg.id)) {
-            sentIds.current.delete(msg.id)
-            return
-          }
-          setMessages((prev) => [...prev, msg])
+    room
+      .on('broadcast', { event: 'msg' }, ({ payload }) => {
+        addMsg(payload as Message)
+      })
+      .on('broadcast', { event: 'sys' }, ({ payload }) => {
+        addMsg(payload as Message)
+      })
+      .on('presence', { event: 'sync' }, () => {
+        const state = room.presenceState<{ nick: string }>()
+        const online = Object.values(state)
+          .flat()
+          .map((u) => u.nick)
+          .filter((v, i, a) => a.indexOf(v) === i) // dedupe
+        setUsers(online)
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        const who = newPresences[0]?.nick
+        if (who && who !== nick) {
+          addMsg(makeMsg('***', `${who} kanala katıldı.`, 'join'))
         }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'channel_users', filter: `channel_id=eq.${channelId}` },
-        () => loadUsers(channelId)
-      )
-      .subscribe()
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        const who = leftPresences[0]?.nick
+        if (who) addMsg(makeMsg('***', `${who} kanaldan ayrıldı.`, 'leave'))
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await room.track({ nick })
+          addMsg(makeMsg('***', `Hoş geldin ${nick}! ${CHANNEL_NAME} kanalına bağlandın.`, 'join'))
+        }
+      })
 
     return () => {
-      supabase.removeChannel(sub)
-      if (pingRef.current) clearInterval(pingRef.current)
-      supabase.from('channel_users').delete().eq('channel_id', channelId).eq('nick', nick)
+      supabase.removeChannel(room)
+      channelRef.current = null
     }
-  }, [channelId, nick])
-
-  async function loadUsers(chId: string) {
-    const since = new Date(Date.now() - 40000).toISOString()
-    const { data } = await supabase
-      .from('channel_users').select('nick')
-      .eq('channel_id', chId).gte('last_seen', since)
-    if (data) setUsers(data.map((u) => u.nick))
-  }
-
-  async function upsertPresence(chId: string, userNick: string) {
-    await supabase.from('channel_users').upsert(
-      { channel_id: chId, nick: userNick, last_seen: new Date().toISOString() },
-      { onConflict: 'channel_id,nick' }
-    )
-  }
+  }, [connected, nick, addMsg])
 
   const handleConnect = useCallback(() => {
     const n = nickDraft.trim()
@@ -152,65 +123,39 @@ export default function MircChat() {
 
   const handleSend = useCallback(async () => {
     const text = input.trim()
-    if (!text || !nick) return
+    if (!text || !nick || !channelRef.current) return
     setInput('')
     inputRef.current?.focus()
 
     if (text.startsWith('/')) {
       const [rawCmd, ...rest] = text.slice(1).split(' ')
       const cmd = rawCmd.toLowerCase()
+
       if (cmd === 'nick' && rest[0]) {
         if (!validNick(rest[0])) return
         const old = nick
+        // Announce nick change before updating state
+        await channelRef.current.send({
+          type: 'broadcast', event: 'sys',
+          payload: makeMsg('***', `${old} artık ${rest[0]} olarak biliniyor.`, 'nick'),
+        })
         setNick(rest[0])
-        if (channelId) {
-          await supabase.from('messages').insert({
-            channel_id: channelId, nick: rest[0],
-            content: `${old} artık ${rest[0]} olarak biliniyor.`, msg_type: 'nick',
-          })
-        }
-      } else if (cmd === 'me' && rest.length && channelId) {
-        const optimistic: Message = { id: `opt-${Date.now()}`, nick, content: rest.join(' '), msg_type: 'action', created_at: new Date().toISOString() }
-        setMessages((prev) => [...prev, optimistic])
-        const { data } = await supabase.from('messages').insert({ channel_id: channelId, nick, content: rest.join(' '), msg_type: 'action' }).select('id').single()
-        if (data) {
-          sentIds.current.add(data.id)
-          setMessages((prev) => prev.map((m) => m.id === optimistic.id ? { ...m, id: data.id } : m))
-        }
+      } else if (cmd === 'me' && rest.length) {
+        await channelRef.current.send({
+          type: 'broadcast', event: 'msg',
+          payload: makeMsg(nick, rest.join(' '), 'action'),
+        })
       } else if (cmd === 'yardim' || cmd === 'help') {
-        setMessages((prev) => [...prev, sysMsg('Komutlar: /nick <isim>  /me <eylem>  /yardim')])
+        addMsg(makeMsg('***', 'Komutlar: /nick <isim>  /me <eylem>  /yardim', 'system'))
       }
       return
     }
 
-    if (!channelId) {
-      setMessages((prev) => [...prev, sysMsg('Kanal bağlantısı henüz hazır değil, lütfen bekleyin.')])
-      return
-    }
-
-    // Optimistic: show immediately
-    const optimistic: Message = { id: `opt-${Date.now()}`, nick, content: text, msg_type: 'message', created_at: new Date().toISOString() }
-    setMessages((prev) => [...prev, optimistic])
-
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({ channel_id: channelId, nick, content: text, msg_type: 'message' })
-      .select('id')
-      .single()
-
-    if (error) {
-      // Replace optimistic with error
-      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
-      setMessages((prev) => [...prev, sysMsg(`Mesaj gönderilemedi: ${error.message}`)])
-      return
-    }
-
-    if (data) {
-      // Mark real ID so realtime echo is skipped; swap optimistic id with real id
-      sentIds.current.add(data.id)
-      setMessages((prev) => prev.map((m) => m.id === optimistic.id ? { ...m, id: data.id } : m))
-    }
-  }, [input, channelId, nick])
+    await channelRef.current.send({
+      type: 'broadcast', event: 'msg',
+      payload: makeMsg(nick, text, 'message'),
+    })
+  }, [input, nick, addMsg])
 
   function onKey(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleSend()
